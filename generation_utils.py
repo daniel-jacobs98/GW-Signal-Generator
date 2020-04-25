@@ -99,9 +99,6 @@ def to_hdf(file_path, sim_params, data, sig_params, signal_len):
         param_set_arr = np.array(list(param_set.items()))
         sig_param_arr[i, :, :] = param_set_arr
 
-    print('Signal shape: {0}'.format(h1_strain.shape))
-    print('Time shape: {0}'.format(h1_time.shape))
-    print('Parameter shape: {0}'.format(sig_param_arr.shape))
     signal_dict = {
         'H1':(h1_strain, h1_time),
         'L1':(l1_strain, l1_time),
@@ -112,6 +109,7 @@ def to_hdf(file_path, sim_params, data, sig_params, signal_len):
         if not append:
             sig_group = hdf.create_group('signals')
             for det, (sig_strain, sig_time) in signal_dict.items():
+                #First dimension of maxshape needs to be None so that the datasets can be resized
                 sig_group.create_dataset(name='{0} strain'.format(det),
                                             dtype='float32',
                                             shape=sig_strain.shape,

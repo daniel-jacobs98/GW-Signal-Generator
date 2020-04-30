@@ -26,30 +26,30 @@ import time
 import sys
 import os.path
 from lal import LIGOTimeGPS
-from plot_signal import plot_sigs
+from plot_signal import plot_sigs, plot_with_pure, find_nearest
 import copy
 global signal_len
-signal_len=10000
+signal_len=0.25*2048
 
 global sim_params
 #Defines ranges that parameters are sampled from
 sim_params = {
-	'mass_range':(1.4,80),
+	'mass_range':(5,80),
 	'spin_range':(-1,1),
-	'num_signals':20,
+	'num_signals':10000,
 	'inclination_range':(0, math.pi),
 	'coa_phase_range':(0, 2*math.pi),
 	'right_asc_range':(0, 2*math.pi),
 	'declination_range':(0, 1),
 	'polarisation_range':(0, 2*math.pi),
 	'distance_range':(40, 3000),
-	'snr_range':(15, 20),
+	'snr_range':(40,50),
 
 	#Increased sampleing rate to account for LalSim error: ringdown frequency>nyquist frequency.
 	#I think this is because if the masses are very small (neutron star level) they have too high a 
 	#ringdown frequency to be fully described by a sampling rate of 4096. I questioned why a paper used
 	#8096Hz in my proposal, this is probably why.'''
-	'sample_freq':16384 
+	'sample_freq':2048 
 }
 
 #Yield a parameter set describing a signal uniformly samples from the sim_param ranges
@@ -78,13 +78,6 @@ def get_param_set(sim_params):
 		yield param_set
 
 
-def find_nearest(array,value):
-    idx = np.searchsorted(array, value, side="left")
-    if idx > 0 and (idx == len(array) or math.fabs(value - array[idx-1]) < math.fabs(value - array[idx])):
-        return idx-1
-    else:
-        return idx
-
 #Generate and return projections of a signal described by param_set onto the Hanford, Livingston, Virgo detectors
 def generate_signal(param_set):
 	hp, hc = get_td_waveform(approximant='SEOBNRv4',
@@ -102,6 +95,9 @@ def generate_signal(param_set):
 	det_l1 = Detector('L1')
 	det_v1 = Detector('V1')
 
+	hp = fade_on(hp,0.25)
+	hc = fade_on(hc,0.25)
+
 	sig_h1 = det_h1.project_wave(hp, hc, param_set['ra'], param_set['dec'], param_set['pol'])
 	sig_l1 = det_l1.project_wave(hp, hc, param_set['ra'], param_set['dec'], param_set['pol'])
 	sig_v1 = det_v1.project_wave(hp, hc, param_set['ra'], param_set['dec'], param_set['pol'])
@@ -112,61 +108,34 @@ def generate_signal(param_set):
 
 def cut_sigs(signal_dict):
 	cut_sigs = dict()
-	# rs_sig_dict = copy.deepcopy(signal_dict)
-	# resize_works = True
 	zeroIdxs = {
 		'H1':find_nearest(signal_dict['H1'].sample_times, 0),
 		'L1':find_nearest(signal_dict['L1'].sample_times, 0),
 		'V1':find_nearest(signal_dict['V1'].sample_times, 0)
 	}
-	# for det in ['H1', 'L1', 'V1']:
-	# 	zIdx = zeroIdxs[det]
-	# 	res = rs_sig_dict[det]
-	# 	res.resize(signal_len)
-	# 	if zIdx>res.shape[0]:
-	# 		resize_works=False
-	# 		break
-	# 	else:
-	# 		cut_sigs[det]=res
 
-	# if resize_works:
-	# 	print('Resize')
-	# 	print('H1: {0}\nL1: {1}\nV1: {2}'.format(cut_sigs['H1'].shape[0], cut_sigs['L1'].shape[0], cut_sigs['V1'].shape[0]))
-	# 	return cut_sigs
-
-	print('After res attempt: {0}, {1}, {2}'.format(signal_dict['H1'].shape[0], signal_dict['L1'].shape[0], signal_dict['V1'].shape[0]))
 	for det in ['H1','L1','V1']:
 		zIdx = zeroIdxs[det]
 		sig = signal_dict[det]
-		print(zIdx)
-		startIdx = int(zIdx-(signal_len*0.9))
+		startIdx = int(zIdx-(math.floor(signal_len*0.8)))
 		prep_zeros = 0
-		print(startIdx)
-		endIdx = int(zIdx+(signal_len*0.1))
+		endIdx = int(zIdx+(math.ceil(signal_len*0.2)))
 		ap_zeros = 0
-		print(endIdx)
 		if startIdx<0:
 			prep_zeros = int(startIdx*-1)
 			startIdx = 0
 		if endIdx>sig.shape[0]:
 			ap_zeros = endIdx-sig.shape[0]
 			endIdx = sig.shape[0]-1
-		print('sIdx: {0}, eIdx:  {1}'.format(startIdx, endIdx))
-		print(sig.shape[0])
 		res = sig[startIdx:endIdx]
 		if res.shape[0]!=signal_len:
 			res.prepend_zeros(prep_zeros)
 			res.append_zeros(ap_zeros)
-
-		new_zidx = find_nearest(res.sample_times, 0)
-		print('In' if (new_zidx<endIdx and new_zidx>zIdx) else 'Not in')
 		cut_sigs[det]=res
-	print('Cut')
-	print('H1: {0}\nL1: {1}\nV1: {2}'.format(cut_sigs['H1'].shape[0], cut_sigs['L1'].shape[0], cut_sigs['V1'].shape[0]))
 	return cut_sigs
 
 #Inject a set of signals into Gaussian noise with the given SNR
-def inject_signals_gaussian(signal_dict, inj_snr):
+def inject_signals_gaussian(signal_dict, inj_snr, sig_params):
 	resized_sigs = cut_sigs(signal_dict)
 	noise = dict()
 	global sim_params
@@ -175,7 +144,7 @@ def inject_signals_gaussian(signal_dict, inj_snr):
 		delta_f = resized_sigs[det].delta_f
 		flen = int(sim_params['sample_freq'] / delta_f) + 1
 		psd = pycbc.psd.aLIGOZeroDetHighPower(flen, delta_f, flow)
-		noise[det] = pycbc.noise.gaussian.noise_from_psd(length=resized_sigs[det].sample_times.shape[0],
+		noise[det] = pycbc.noise.gaussian.noise_from_psd(length=resized_sigs[det].shape[0],
 														delta_t=1.0/sim_params['sample_freq'], psd=psd)
 		start_time = resized_sigs[det].start_time
 		noise[det]._epoch = LIGOTimeGPS(start_time)
@@ -184,24 +153,51 @@ def inject_signals_gaussian(signal_dict, inj_snr):
 	dummy_strain = dict()
 	snrs = dict()
 
+	print('Noise len: {0}\n Signal len: {1}'.format(noise['H1'].shape[0], resized_sigs['H1'].shape[0]))
+
 	#using dummy strain and psds from the noise, calculate the snr of each signal+noise injection to find the 
 	#network optimal SNR, used for injecting the real signal
 	for det in ('H1', 'L1', 'V1'):
 		delta_f = resized_sigs[det].delta_f
-		noise_inj = noise[det].add_into(resized_sigs[det])
-		dummy_strain[det] = noise_inj
-		psds[det] = noise_inj.psd(0.6)
+		dummy_strain[det] = noise[det].add_into(resized_sigs[det])
+		
+		psds[det] = dummy_strain[det].psd(0.2)
 		psds[det] = pycbc.psd.interpolate(psds[det], delta_f=delta_f)
 		snrs[det] = sigma(htilde=resized_sigs[det],
 							psd=psds[det],
 							low_frequency_cutoff=flow)
-	nomf_snr = np.sqrt(snrs['H1']**2 + snrs['L1']**2 + snrs['V1']**2)
-	scale_factor = inj_snr/float(nomf_snr)
+	nomf_snr = np.sqrt(snrs['H1']**2 + snrs['L1']**2)
+	scale_factor = 1.0* inj_snr/nomf_snr
+	print('nomf_snr: {0}\ntarget snr: {2}\nsf: {1}'.format(nomf_snr, scale_factor, inj_snr))
 	noisy_signals = dict()
-
+	print(nomf_snr)
+	print(inj_snr)
+	print(scale_factor)
 	#inject signals with the correct scaling factor for the target SNR
 	for det in ('H1', 'L1', 'V1'):
-		noisy_signals[det] = noise[det].add_into(scale_factor*resized_sigs[det])
+		fig, axes = plt.subplots(nrows=3)
+
+		axes[1].plot(noise[det].sample_times, noise[det], 'b')
+		axes[1].set_title('Gaussian noise')
+		axes[1].set_ylabel('Strain')
+
+		noisy_signals[det] = noise[det].add_into(resized_sigs[det]*scale_factor)
+		# noisy_signals[det] = noisy_signals[det].whiten(segment_duration=1,
+		# 												max_filter_duration=1, 
+		# 												remove_corrupted=False)
+		
+		axes[0].plot(resized_sigs[det].sample_times, resized_sigs[det], 'r')
+		axes[0].set_title('Pure signal (at {0})'.format(det))
+		axes[0].set_ylabel('Strain')
+		
+		axes[2].plot(noisy_signals[det].sample_times, noisy_signals[det], 'b')
+		#axes[2].plot(resized_sigs[det].sample_times, (resized_sigs[det]*scale_factor), 'r')
+		axes[2].set_ylabel('Strain')
+		axes[2].set_xlabel('Time from merger (seconds')
+		axes[2].set_title('Injected signal (at {0})'.format(det))
+		plt.subplots_adjust(hspace=0.45)
+		fig.suptitle('Masses: [{0:.2f}, {1:.2f}], SNR: {2:.2f}'.format(sig_params['m1'], sig_params['m2'], inj_snr))
+		plt.show()
 	return noisy_signals
 
 if __name__ == '__main__':
@@ -233,38 +229,17 @@ if __name__ == '__main__':
 	param_list = []
 	noisy_sig_list = []
 
-	# test_params = {
-	# 	'm1':38.81,
-	# 	'm2':8.30,
-	# 	'x1':0.36,
-	# 	'x2':-0.81,
-	# 	'snr':18.20,
-	# 	'dist':1839,
-	# 	'ra':2.64,
-	# 	'dec':-0.24,
-	# 	'f':16384,
-	# 	'coa':rand.uniform(sim_params['coa_phase_range'][0], sim_params['coa_phase_range'][1]),
-	# 	'pol':rand.uniform(sim_params['polarisation_range'][0], sim_params['polarisation_range'][1]),
-	# 	'inc':rand.uniform(sim_params['inclination_range'][0], sim_params['inclination_range'][1])
-	# }
-	# sig = generate_signal(test_params)
-	# print(sig)
-	# noisy_sig = inject_signals_gaussian(sig, test_params['snr'])
-	# print(noisy_sig['H1'].shape[0])
-	# print(noisy_sig['L1'].shape[0])	
-	# print(noisy_sig['V1'].shape[0])
-	# fig, axes = plt.subplots(nrows=6)
-	# for i, det in enumerate(['H1', 'L1', 'V1']):
-	# 	axes[i].plot(sig[det].sample_times, sig[det], label=det)
-	# 	axes[i+3].plot(noisy_sig[det].sample_times, noisy_sig[det], label=det)
-	# plt.show()
-	# sys.exit()
-
 	for i in range(0, sim_params['num_signals']):
 		param_list.append(next(get_param_set(sim_params)))
-		sig_list.append(generate_signal(param_list[-1]))
-		noisy_sig_list.append(inject_signals_gaussian(sig_list[-1], param_list[-1]['snr']))
 
+		param_list[-1]['m1'] = 78.47
+		param_list[-1]['m2'] = 68.75
+		param_list[-1]['snr'] = 25.97
+
+		sig_list.append(generate_signal(param_list[-1]))
+		noisy_sig_list.append(inject_signals_gaussian(sig_list[-1], param_list[-1]['snr'], param_list[-1]))
+		print(noisy_sig_list[-1]['H1'].shape)
+		break
 		#Every x loops, save the samples generated, stops memory errors when generating large datasets
 		#Recommend value ~1000 (~400Mb)
 		x=1000

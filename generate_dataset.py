@@ -2,11 +2,7 @@
 	Daniel Jacobs 2020
 '''
 
-#TODO: Write in chunks (append) to HDF
-#TODO: Make all waveforms the same size so they can be appended to HDF
-#TODO: Add Gaussian noise
-#TODO: Fix mass (frequency) error
-#TODO:
+#TODO: Whiten sample
 
 from pycbc.waveform import td_approximants
 from pycbc.waveform import get_td_waveform
@@ -144,9 +140,9 @@ def inject_signals_gaussian(signal_dict, inj_snr, sig_params):
 		delta_f = resized_sigs[det].delta_f
 		flen = int(sim_params['sample_freq'] / delta_f) + 1
 		psd = pycbc.psd.aLIGOZeroDetHighPower(flen, delta_f, flow)
-		noise[det] = pycbc.noise.gaussian.noise_from_psd(length=resized_sigs[det].shape[0],
+		noise[det] = pycbc.noise.gaussian.noise_from_psd(length=sim_params['sample_freq']*16,
 														delta_t=1.0/sim_params['sample_freq'], psd=psd)
-		start_time = resized_sigs[det].start_time
+		start_time = resized_sigs[det].start_time-8
 		noise[det]._epoch = LIGOTimeGPS(start_time)
 
 	psds = dict()
@@ -182,9 +178,11 @@ def inject_signals_gaussian(signal_dict, inj_snr, sig_params):
 		axes[1].set_ylabel('Strain')
 
 		noisy_signals[det] = noise[det].add_into(resized_sigs[det]*scale_factor)
-		# noisy_signals[det] = noisy_signals[det].whiten(segment_duration=1,
-		# 												max_filter_duration=1, 
-		# 												remove_corrupted=False)
+		noisy_signals[det] = noisy_signals[det].whiten(segment_duration=1,
+														max_filter_duration=1, 
+														remove_corrupted=False,
+														low_frequency_cutoff=30.0)
+		noisy_signals[det] = noisy_signals[det].time_slice(-0.2, 0.05)
 		
 		axes[0].plot(resized_sigs[det].sample_times, resized_sigs[det], 'r')
 		axes[0].set_title('Pure signal (at {0})'.format(det))
@@ -232,14 +230,14 @@ if __name__ == '__main__':
 	for i in range(0, sim_params['num_signals']):
 		param_list.append(next(get_param_set(sim_params)))
 
-		param_list[-1]['m1'] = 78.47
-		param_list[-1]['m2'] = 68.75
-		param_list[-1]['snr'] = 25.97
+		# param_list[-1]['m1'] = 78.47
+		# param_list[-1]['m2'] = 68.75
+		# param_list[-1]['snr'] = 25.97
 
 		sig_list.append(generate_signal(param_list[-1]))
 		noisy_sig_list.append(inject_signals_gaussian(sig_list[-1], param_list[-1]['snr'], param_list[-1]))
 		print(noisy_sig_list[-1]['H1'].shape)
-		break
+	
 		#Every x loops, save the samples generated, stops memory errors when generating large datasets
 		#Recommend value ~1000 (~400Mb)
 		x=1000

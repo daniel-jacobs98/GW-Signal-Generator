@@ -149,8 +149,6 @@ def inject_signals_gaussian(signal_dict, inj_snr, sig_params):
 	dummy_strain = dict()
 	snrs = dict()
 
-	print('Noise len: {0}\n Signal len: {1}'.format(noise['H1'].shape[0], resized_sigs['H1'].shape[0]))
-
 	#using dummy strain and psds from the noise, calculate the snr of each signal+noise injection to find the 
 	#network optimal SNR, used for injecting the real signal
 	for det in ('H1', 'L1', 'V1'):
@@ -162,13 +160,9 @@ def inject_signals_gaussian(signal_dict, inj_snr, sig_params):
 		snrs[det] = sigma(htilde=resized_sigs[det],
 							psd=psds[det],
 							low_frequency_cutoff=flow)
-	nomf_snr = np.sqrt(snrs['H1']**2 + snrs['L1']**2)
+	nomf_snr = np.sqrt(2*((snrs['H1']+snrs['L1']+snrs['V1'])/3)**2)
 	scale_factor = 1.0* inj_snr/nomf_snr
-	print('nomf_snr: {0}\ntarget snr: {2}\nsf: {1}'.format(nomf_snr, scale_factor, inj_snr))
 	noisy_signals = dict()
-	print(nomf_snr)
-	print(inj_snr)
-	print(scale_factor)
 	#inject signals with the correct scaling factor for the target SNR
 	for det in ('H1', 'L1', 'V1'):
 		fig, axes = plt.subplots(nrows=3)
@@ -229,14 +223,8 @@ if __name__ == '__main__':
 
 	for i in range(0, sim_params['num_signals']):
 		param_list.append(next(get_param_set(sim_params)))
-
-		# param_list[-1]['m1'] = 78.47
-		# param_list[-1]['m2'] = 68.75
-		# param_list[-1]['snr'] = 25.97
-
 		sig_list.append(generate_signal(param_list[-1]))
 		noisy_sig_list.append(inject_signals_gaussian(sig_list[-1], param_list[-1]['snr'], param_list[-1]))
-		print(noisy_sig_list[-1]['H1'].shape)
 	
 		#Every x loops, save the samples generated, stops memory errors when generating large datasets
 		#Recommend value ~1000 (~400Mb)

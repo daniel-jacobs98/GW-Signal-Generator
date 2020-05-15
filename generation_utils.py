@@ -1,5 +1,6 @@
 '''
     Daniel Jacobs 2020
+    OzGrav - University of Western Australia
 '''
 
 import math
@@ -83,7 +84,8 @@ def convert_cbc_array_to_np(signals, target_length):
 #If this is the first set, create groups and file structure
 def to_hdf(file_path, sim_params, data, sig_params, signal_len):
     #Initialise arrays to hold strain, sample_times, and parameters
-    shape = (len(data), signal_len)
+    shape = (len(data), int(signal_len))
+    print(shape)
     h1_strain = np.zeros(shape)
     l1_strain = np.zeros(shape)
     v1_strain = np.zeros(shape)

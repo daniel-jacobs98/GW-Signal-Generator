@@ -1,8 +1,7 @@
 '''
 	Daniel Jacobs 2020
+	OzGrav - University of Western Australia
 '''
-
-#TODO: Whiten sample
 
 from pycbc.waveform import td_approximants
 from pycbc.waveform import get_td_waveform
@@ -24,12 +23,12 @@ import os.path
 from lal import LIGOTimeGPS
 from plot_signal import plot_sigs, plot_with_pure, find_nearest
 import copy
-global signal_len
-signal_len=0.25*2048
+
 
 global sim_params
 #Defines ranges that parameters are sampled from
 sim_params = {
+	# Black hole mass range
 	'mass_range':(5,80),
 	'spin_range':(-1,1),
 	'num_signals':10000,
@@ -39,14 +38,12 @@ sim_params = {
 	'declination_range':(0, 1),
 	'polarisation_range':(0, 2*math.pi),
 	'distance_range':(40, 3000),
-	'snr_range':(40,50),
-
-	#Increased sampleing rate to account for LalSim error: ringdown frequency>nyquist frequency.
-	#I think this is because if the masses are very small (neutron star level) they have too high a 
-	#ringdown frequency to be fully described by a sampling rate of 4096. I questioned why a paper used
-	#8096Hz in my proposal, this is probably why.'''
-	'sample_freq':2048 
+	'snr_range':(10,20),
+	'sample_freq':4096 
 }
+
+global signal_len
+signal_len=0.25*sim_params['sample_freq']
 
 #Yield a parameter set describing a signal uniformly samples from the sim_param ranges
 def get_param_set(sim_params):
@@ -76,7 +73,7 @@ def get_param_set(sim_params):
 
 #Generate and return projections of a signal described by param_set onto the Hanford, Livingston, Virgo detectors
 def generate_signal(param_set):
-	hp, hc = get_td_waveform(approximant='SEOBNRv4',
+	hp, hc = get_td_waveform(approximant='SEOBNRv4', #This approximant is only appropriate for BBH mergers
 							mass1=param_set['m1'],
 							mass2=param_set['m2'],
 							spin1z=param_set['x1'],
@@ -86,6 +83,8 @@ def generate_signal(param_set):
 							distance=param_set['dist'],
 							delta_t=1.0/param_set['f'],
 							f_lower=30)
+
+	time = 100000000
 
 	det_h1 = Detector('H1')
 	det_l1 = Detector('L1')
@@ -102,6 +101,8 @@ def generate_signal(param_set):
 			'L1':sig_l1,
 			'V1':sig_v1}
 
+
+#Reshape signals to desired length by appending and prepending zeros if necessary
 def cut_sigs(signal_dict):
 	cut_sigs = dict()
 	zeroIdxs = {
@@ -163,34 +164,42 @@ def inject_signals_gaussian(signal_dict, inj_snr, sig_params):
 	nomf_snr = np.sqrt(2*((snrs['H1']+snrs['L1']+snrs['V1'])/3)**2)
 	scale_factor = 1.0* inj_snr/nomf_snr
 	noisy_signals = dict()
+
 	#inject signals with the correct scaling factor for the target SNR
 	for det in ('H1', 'L1', 'V1'):
-		fig, axes = plt.subplots(nrows=3)
-
-		axes[1].plot(noise[det].sample_times, noise[det], 'b')
-		axes[1].set_title('Gaussian noise')
-		axes[1].set_ylabel('Strain')
-
 		noisy_signals[det] = noise[det].add_into(resized_sigs[det]*scale_factor)
+
+		#Whiten signal
 		noisy_signals[det] = noisy_signals[det].whiten(segment_duration=1,
 														max_filter_duration=1, 
 														remove_corrupted=False,
 														low_frequency_cutoff=30.0)
+
+		#Cut down to desired length and cut off corrupted tails of signal
 		noisy_signals[det] = noisy_signals[det].time_slice(-0.2, 0.05)
 		
-		axes[0].plot(resized_sigs[det].sample_times, resized_sigs[det], 'r')
-		axes[0].set_title('Pure signal (at {0})'.format(det))
-		axes[0].set_ylabel('Strain')
-		
-		axes[2].plot(noisy_signals[det].sample_times, noisy_signals[det], 'b')
-		#axes[2].plot(resized_sigs[det].sample_times, (resized_sigs[det]*scale_factor), 'r')
-		axes[2].set_ylabel('Strain')
-		axes[2].set_xlabel('Time from merger (seconds')
-		axes[2].set_title('Injected signal (at {0})'.format(det))
-		plt.subplots_adjust(hspace=0.45)
-		fig.suptitle('Masses: [{0:.2f}, {1:.2f}], SNR: {2:.2f}'.format(sig_params['m1'], sig_params['m2'], inj_snr))
-		plt.show()
+		# fig, axes = plt.subplots(nrows=3)
+
+		# axes[0].plot(resized_sigs[det].sample_times, resized_sigs[det], 'r')
+		# axes[0].set_title('Pure signal (at {0})'.format(det))
+		# axes[0].set_ylabel('Strain')
+
+		# plot_noise = noise[det].time_slice(-0.2,0.05)
+		# axes[1].plot(plot_noise.sample_times, plot_noise, 'b')
+		# axes[1].set_title('Gaussian noise')
+		# axes[1].set_ylabel('Strain')
+
+		# axes[2].plot(noisy_signals[det].sample_times, noisy_signals[det], 'b')
+		# axes[2].set_ylabel('Strain')
+
+		# axes[2].set_xlabel('Time from merger (seconds')
+		# axes[2].set_title('Injected signal (at {0})'.format(det))
+		# plt.subplots_adjust(hspace=0.45)
+		# fig.suptitle('Masses: [{0:.2f}, {1:.2f}], SNR: {2:.2f}'.format(sig_params['m1'], sig_params['m2'], inj_snr))
+		# plt.show()
 	return noisy_signals
+
+
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='''Generate a GW signal dataset 
@@ -218,6 +227,7 @@ if __name__ == '__main__':
 	print('Starting generation of {0} signals...'.format(sim_params['num_signals']))
 
 	sig_list = []
+	offset_list = []
 	param_list = []
 	noisy_sig_list = []
 
@@ -230,10 +240,12 @@ if __name__ == '__main__':
 		#Recommend value ~1000 (~400Mb)
 		x=1000
 		if i%x==0 and i!=0:
+			print('Finished {0}...'.format(i))
 			to_hdf(output_path, sim_params, noisy_sig_list, param_list, signal_len)
 			sig_list=[]
 			param_list=[]
 			noisy_sig_list=[]
+			offset_list=[]
 	to_hdf(output_path, sim_params, noisy_sig_list, param_list, signal_len)
 
 	end = time.time()
